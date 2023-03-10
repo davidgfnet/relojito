@@ -1,0 +1,916 @@
+<!doctype html>
+<html lang="en" dir="ltr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="relojito configurator">
+  <title>relojito configurator</title>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/milligram/1.4.1/milligram.css">
+  <style>
+    .h3 {
+      width: 100%;
+    }
+    .button-danger {
+      background-color: black;
+      border-color: black;
+    }
+    .button-inline {
+      padding-left: 1em;
+      padding-right: 1em;
+      display: inline-block;
+      margin: 0;
+    }
+    td > input {
+      margin: 0;
+    }
+    td > select {
+      margin: 0;
+    }
+    .lasttd {
+      text-align: right;
+    }
+    label {
+      display: inline;
+    }
+    .inline-sel {
+      display: inline-block;
+      width: 25%;
+    }
+    .inline-pick {
+      display: inline-block;
+      width: 25% !important;
+    }
+    .inline-col {
+      display: inline-block;
+      width: 50px !important;
+    }
+    hr {
+      margin-top: 0em;
+      margin-bottom: 1em;
+    }
+    .invisible {
+      display: none;
+    }
+
+    .tooltip {
+      position: relative;
+      display: inline-block;
+    }
+
+    .tooltip .tooltiptext {
+      visibility: hidden;
+      width: 240px;
+      background-color: #555;
+      color: #fff;
+      text-align: center;
+      padding: 5px 0;
+      border-radius: 6px;
+
+      position: absolute;
+      z-index: 1;
+      bottom: 125%;
+      left: 50%;
+      margin-left: -120px;
+
+      opacity: 0;
+      transition: opacity 0.3s;
+    }
+
+    .tooltip .tooltiptext::after {
+      content: "";
+      position: absolute;
+      top: 100%;
+      left: 50%;
+      margin-left: -5px;
+      border-width: 5px;
+      border-style: solid;
+      border-color: #555 transparent transparent transparent;
+    }
+
+    .tooltip:hover .tooltiptext {
+      visibility: visible;
+      opacity: 1;
+    }
+    .footer-ver {
+      position: fixed;
+      right: 3px;
+      bottom: 3px;
+    }
+    .newrule {
+      border-radius: 5px;
+      padding: 10px;
+    }
+    .ruleitem {
+      border-style: solid;
+      border-width: 1px;
+      border-radius: 3px;
+      border-color: #333;
+      padding: 5px;
+      margin-bottom: 4px;
+    }
+    .ruleitem p {
+      margin-bottom: 0.5em;
+    }
+
+    .modal {
+      display: none;
+      position: fixed;
+      z-index: 1;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      overflow: auto;
+      background-color: rgb(0,0,0);
+      background-color: rgba(0,0,0,0.4);
+    }
+    .modal-content {
+      background-color: #fefefe;
+      margin: 15% auto;
+      padding: 20px;
+      border: 1px solid #888;
+      width: 80%;
+    }
+    .edtctrl {
+      text-align: right;
+    }
+  </style>
+  <script type="text/javascript">
+    var MAX_RULES   = 16;
+    var serviceUUID = 0xFFE0, charactUUID = 0xFFE1;
+
+    var trans_types = [
+      "Per defecte",
+      "Sense transició",
+      "Fade in",
+      "Caiguda",
+      "Màquina d'escriure",
+      "Matrix",
+    ];
+    var trans_delays = [
+      "125ms", "250ms", "350ms", "500ms",
+      "700ms", "800ms", "900ms", "1s",
+      "1.3s",  "1.6s",  "2s",    "2.5s",
+      "3s",    "3.5s",  "4s",    "5s",
+    ];
+    var show_list = ["L'hora", "Tres quarts de quinze", "No res"];
+    var show_greet = ["", "Bon dia", "Bona tarda", "Bona nit"];
+    var extra_string = '"a dormir!"';
+    var mode_names = ["Mostra l'hora actual", "Test de LEDs", "Mode demo"];
+
+    function concat8(arrays) {
+      var flen = arrays.reduce((acc, value) => acc + value.length, 0);
+      var res = new Uint8Array(flen);
+      var l = 0;
+      for(let ar of arrays) {
+        res.set(ar, l);
+        l += ar.length;
+      }
+      return res;
+    }
+
+    function w32le(num) {
+      return new Uint8Array([
+        num & 0xff,
+        (num >> 8) & 0xff,
+        (num >> 16) & 0xff,
+        (num >> 24) & 0xff,
+      ]);
+    }
+    function w16le(num) {
+      return new Uint8Array([
+        num & 0xff,
+        (num >> 8) & 0xff,
+      ]);
+    }
+
+    function connectError(errmsg) {
+      alert(errmsg); // FIXME
+    }
+
+    // Given a DataView into a buffer, generates the checksum
+    function calc_chk(dv) {
+      var ret = 0xc1f94e12;
+        for (var i = 0; i < dv.byteLength; i += 4)
+          ret ^= dv.getUint32(i, true);
+      return ret;
+    }
+
+    // Packs messages to the frame format
+    function msg_wrap(buf) {
+      var lenhi = String.fromCharCode((buf.byteLength >> 5) + "@".charCodeAt(0));
+      var lenlo = String.fromCharCode((buf.byteLength & 15) + "@".charCodeAt(0));
+      var chk = 0xde;
+      for (var i = 0; i < buf.byteLength; i++)
+        chk ^= buf.getUint8(i);
+      chk |= (((~chk) << 8) & 0xff00);
+      var ret = "HZR_" + lenhi + lenlo + (chk).toString(16).padStart(4, '0');
+      for (var i = 0; i < buf.byteLength; i++)
+        ret += (buf.getUint8(i)).toString(16).padStart(2, '0');
+      return ret;
+    }
+
+    async function send_ble(s) {
+      for (var i = 0; i < s.length; i += 10) {
+        var chunk = s.substring(i, i+10);
+        console.log(chunk);
+        await caract.writeValue(new TextEncoder().encode(chunk + "\n"));
+      }
+    }
+
+    async function push_config() {
+      // Serialize configuration and push
+      var pload = serialize_cfg(devcfg);
+      var fullp = concat8([new Uint8Array([5]), pload]);
+      var wrapped = msg_wrap(new DataView(fullp.buffer));
+      await send_ble(wrapped);
+    }
+
+    function E(n) {
+      return document.getElementById(n);
+    }
+
+    async function readclock() {
+      // Send a request to read current time
+      var gettime = msg_wrap(new DataView((new Uint8Array([0])).buffer));
+      await caract.writeValue(new TextEncoder().encode(gettime + "\n"));
+    }
+
+    async function updateclock() {
+      var ts = Math.floor(E("seltime").valueAsNumber /  1000);
+      // Send a request to update time
+      var pload = [4, (ts >> 0) & 0xff, (ts >> 8) & 0xff, (ts >> 16) & 0xff, (ts >> 24) & 0xff]
+
+      var settime = msg_wrap(new DataView((new Uint8Array(pload)).buffer));
+      await caract.writeValue(new TextEncoder().encode(settime + "\n"));
+    }
+
+    const fromHexString = (hexString) =>
+      Uint8Array.from(hexString.match(/.{1,2}/g).map((byte) => parseInt(byte, 16)));
+
+    function unserialize_cfg(b) {
+      // First 32 bits indicate the number of rules
+      var buf = new DataView(b.buffer);
+      var rules = [];
+      var nrule = buf.getUint32(0, true);
+      for (var i = 0; i < nrule; i++) {
+        var flags = buf.getUint8( 4 + 20*i + 10);
+        var mcol = (buf.getUint8( 4 + 20*i + 11) << 16) |
+                   (buf.getUint8( 4 + 20*i + 12) <<  8) |
+                   (buf.getUint8( 4 + 20*i + 13) <<  0);
+        var gcol = (buf.getUint8( 4 + 20*i + 14) << 16) |
+                   (buf.getUint8( 4 + 20*i + 15) <<  8) |
+                   (buf.getUint8( 4 + 20*i + 16) <<  0);
+        var ecol = (buf.getUint8( 4 + 20*i + 17) << 16) |
+                   (buf.getUint8( 4 + 20*i + 18) <<  8) |
+                   (buf.getUint8( 4 + 20*i + 19) <<  0);
+        rules.push({
+          "cond": {
+            "start_time": buf.getUint16(4 + 20*i + 0, true),
+            "end_time":   buf.getUint16(4 + 20*i + 2, true),
+            "dow":        buf.getUint8( 4 + 20*i + 4),
+            "dom":        buf.getUint8( 4 + 20*i + 5),
+            "pwm_cnt":    buf.getUint8( 4 + 20*i + 6),
+            "pwm_per":    buf.getUint8( 4 + 20*i + 7),
+          },
+          "action": {
+            "trans":      buf.getUint8( 4 + 20*i + 8),
+            "transd":     buf.getUint8( 4 + 20*i + 9),
+            "show":       (flags >> 4),
+            "greet":      (flags & 3),
+            "extra":      (flags & 0x4) ? 1 : 0,
+          },
+          "mcolor": mcol,
+          "ecolor": ecol,
+          "gcolor": gcol,
+        });
+      }
+      return rules;
+    }
+
+    function serialize_action(rule) {
+      var flg = (rule.action.show << 4) | 
+                (rule.action.greet & 3) |
+                (rule.action.extra ? 4 : 0);
+      var res = new Uint8Array([
+        rule.action.trans, rule.action.transd, flg,
+        (rule.mcolor >> 16) & 0xff,
+        (rule.mcolor >>  8) & 0xff,
+        (rule.mcolor >>  0) & 0xff,
+        (rule.gcolor >> 16) & 0xff,
+        (rule.gcolor >>  8) & 0xff,
+        (rule.gcolor >>  0) & 0xff,
+        (rule.ecolor >> 16) & 0xff,
+        (rule.ecolor >>  8) & 0xff,
+        (rule.ecolor >>  0) & 0xff,
+      ]);
+      return res;
+    }
+
+    function serialize_cfg(cfg) {
+      var m = [w32le(cfg.length)];
+      for (var i = 0; i < cfg.length; i++) {
+        var flg = (cfg[i].action.show << 4) | 
+                  (cfg[i].action.greet & 3) |
+                  (cfg[i].action.extra ? 4 : 0);
+        m.push(w16le(cfg[i].cond.start_time));
+        m.push(w16le(cfg[i].cond.end_time));
+        m.push(new Uint8Array([
+          cfg[i].cond.dow, cfg[i].cond.dom,
+          cfg[i].cond.pwm_cnt, cfg[i].cond.pwm_per,
+        ]));
+        m.push(serialize_action(cfg[i]));
+      }
+      for (var i = cfg.length; i < MAX_RULES; i++)
+        m.push(new Uint8Array(20));  // Zero padding
+
+      return concat8(m);
+    }
+
+    function process_response(p) {
+      var buf = p.slice(1);
+      switch (p[0]) {
+      case 0:     // Current time read
+        console.log(p);
+        var t4 = new Uint32Array(buf.buffer);
+        E("seltime").valueAsNumber = t4[0] * 1000;
+        break;
+      case 1:
+        // TODO
+        console.log(buf);
+        devcfg = unserialize_cfg(buf);
+        refresh_config(devcfg);
+        break;
+      case 2:    // Current mode
+        E("spanmode").innerHTML = mode_names[p[1]];
+        break;
+      case 5:    // Flash status
+        var s = (new TextDecoder()).decode(buf);
+        console.log(s);
+        if (s == "FLASHOK")
+          alert("Configuracio guardada");
+        else
+          alert("Hi ha hagut un problema al guardar la configuracio");
+        break;
+      };
+    }
+
+    var recv_buffer = "";
+
+    function process_resp_buffer() {
+      // Process buffer, find valid frames, decode them and pass them up.
+      var p = recv_buffer.indexOf("HZR_");
+      if (p < 0)
+        return;
+      recv_buffer = recv_buffer.substring(p);
+      if (recv_buffer.length < 12)
+        return;  // Wait for moar data
+      var lenhi = recv_buffer.charCodeAt(4) - "@".charCodeAt(0);
+      var lenlo = recv_buffer.charCodeAt(5) - "@".charCodeAt(0);
+      if (lenhi < 0 || lenhi >= 16 || lenlo < 0 || lenlo >= 32) {
+        recv_buffer = recv_buffer.substring(4);
+        return;   // Invalid length!
+      }
+      var plen = (lenhi << 5) | lenlo;
+      if (plen*2 + 10 > recv_buffer.length) {
+        return;   // We need more data too
+      }
+
+      // Now we unhex the payload data
+      var pload = fromHexString(recv_buffer.substring(10, 10+plen*2));
+      var ccheck = 0xde;
+      for (var i = 0; i < pload.byteLength; i++)
+        ccheck ^= pload[i];
+	    ccheck = (ccheck | ((~ccheck) << 8)) & 0xffff;
+      var rcheck = parseInt(recv_buffer.substring(6, 10), 16);
+      if (ccheck != rcheck) {
+        console.log("Checksum mismatch in received packet");
+        recv_buffer = recv_buffer.substring(4);
+        return;  // Checksum mismatch!
+      }
+      process_response(pload);
+
+      // Ignore this packet so we can find the next
+      recv_buffer = recv_buffer.substring(plen*2+10);
+    }
+
+    function recv_handler(ev) {
+      var t = new TextDecoder();
+      var text = t.decode(new Uint8Array(ev.target.value.buffer));
+      recv_buffer += text;   // We receive in blocks of 20 bytes
+      process_resp_buffer();
+    }
+
+    function fmt_time(nmins) {
+      var nhour = Math.floor(nmins / 60);
+      var nmin = nmins % 60;
+      return nhour.toString(10).padStart(2, '0') + ":" + nmin.toString(10).padStart(2, '0');
+    }
+
+    function fmt_dow(msk) {
+      var ret = "";
+      var m = ["Dg", "Dl", "Dm", "Dc", "Dj", "Dv", "Ds"];
+      for (var i = 0; i < 7; i++)
+        if (!(msk & (1 << i)))
+          ret += m[i] + "/";
+      if (!ret.length)
+        return "Cap dia";
+      return ret.substring(0, ret.length-1);
+    }
+
+    function refresh_config(rules) {
+      var data = "";
+      for (var i = 0; i < rules.length; i++) {
+        var hi = fmt_time(rules[i].cond.start_time);
+        var hf = fmt_time(rules[i].cond.end_time);
+        var timeday = (rules[i].cond.start_time == 0 && rules[i].cond.end_time == 0) ?
+          `<b>Horari:</b> Tot el dia</b>` : `<b>Temps d'inici:</b> ${hi} / <b>Temps final:</b> ${hf}`;
+        var ti = trans_types[rules[i].action.trans >> 4];
+        var to = trans_types[rules[i].action.trans & 15];
+        var tid = trans_delays[rules[i].action.transd >> 4];
+        var tod = trans_delays[rules[i].action.transd & 15];
+        var show = show_list[rules[i].action.show];
+        var greet = show_greet[rules[i].action.greet];
+        if (greet) greet = " + " + greet;
+        var extra = rules[i].action.extra ? " + " + extra_string : "";
+        var dowd = rules[i].cond.dow ? fmt_dow(rules[i].cond.dow)
+                                     : "Tots els dies de la setmana";
+
+        var elem = `
+          <div class="ruleitem">
+            <div>
+              <p>${timeday}</p>
+              <p><b>Dies:</b> ${dowd}</p> 
+            </div>
+            <div>
+              <p><b>Mostrar:</b> ${show}${greet}${extra}</p> 
+              <p><b>Transició d'entrada:</b> ${ti} (${tid}) / <b>Transició de sortida:</b> ${to} (${tod})</p> 
+            </div>
+            <div class="edtctrl">
+              <bottom onclick="ruleup(${i})">⬆️</bottom>&nbsp;&nbsp;
+              <bottom onclick="ruledw(${i})">⬇️</bottom>&nbsp;&nbsp;
+              <bottom onclick="ruleedt(${i})">✏️</bottom>&nbsp&nbsp;
+              <bottom onclick="ruledel(${i})">🗑️</bottom>&nbsp;&nbsp;
+            </div>
+          </div>
+         `;
+        data += elem;
+      }
+      E("rulelist").innerHTML = data;
+    }
+
+    var device = null, caract = null;
+    var devcfg = [];
+    function pageload() {
+      var h = '<option value="0">Tots els dies</option>';
+      for (var i = 1; i <= 31; i++)
+        h += '<option value="' + i + '">' + i + '.</option>';
+      E("time_dom").innerHTML = h;
+
+      var h = '<option value="0">sempre</option>';
+      for (var i = 1; i <= 255; i++)
+        h += '<option value="' + i + '">' + i + ' segons</option>';
+      E("pwm_cnt").innerHTML = h;
+
+      var h = '';
+      for (var i = 0; i <= 255; i++)
+        h += '<option value="' + i + '">' + ((i+1)*2) + ' segons</option>';
+      E("pwm_per").innerHTML = h;
+
+      E('cfg-rld').onclick = async () => {
+        // Read current configuration
+        var rawcfg = await device.controlTransferIn({
+          requestType: 'standard',
+          recipient: 'interface',
+          request: 0xfe,  // Read config
+          value: 0xd1bd,  // Magic key
+          index: 0x0002   // Interface 2
+        }, 1024);
+
+        if (rawcfg.status != "ok" || rawcfg.data.getUint32(0, true) != CFG_MAGIC)
+          return;
+
+        fakecfg = parseConfig(rawcfg);
+        refresh_config(fakecfg);
+      };
+
+      E('cfg-save').onclick = push_config;
+
+      E('disconnbutt').onclick = async () => {
+        device.gatt.disconnect();
+        device = null;
+        caract = null;
+        E("connbutt").classList.remove("invisible");
+        E("disconnbutt").classList.add("invisible");
+        E("cont2").classList.add("invisible");
+        E("cont3").classList.add("invisible");
+      };
+
+      E('connbutt').onclick = async () => {
+        device = await navigator.bluetooth.requestDevice({
+          filters: [{services: [serviceUUID]}],
+        });
+
+        // Connect to the server
+        var res = await device.gatt.connect();
+
+        if (!res.connected) {
+          alert("Could not connect to the device!");
+          return 0;
+        }
+
+        // Get service and characteristic
+        var srv = await device.gatt.getPrimaryService(serviceUUID);
+        caract = await srv.getCharacteristic(charactUUID);
+        await caract.startNotifications();
+        caract.addEventListener('characteristicvaluechanged', recv_handler)
+
+        // Send initial requests: get current time and current config
+        var gettime = msg_wrap(new DataView((new Uint8Array([0])).buffer));
+        var getconf = msg_wrap(new DataView((new Uint8Array([1])).buffer));
+        var getmode = msg_wrap(new DataView((new Uint8Array([2])).buffer));
+        await caract.writeValue(new TextEncoder().encode(gettime + "\n"));
+        await caract.writeValue(new TextEncoder().encode(getconf + "\n"));
+        await caract.writeValue(new TextEncoder().encode(getmode + "\n"));
+
+        E("connbutt").classList.add("invisible");
+        E("disconnbutt").classList.remove("invisible");
+        E("cont2").classList.remove("invisible");
+        E("cont3").classList.remove("invisible");
+      };
+
+      // Keep colors sync'ed
+      E('col0').oninput = function () {
+        if (E('colsame').checked)
+          E('col1').value = E('col2').value = E('col0').value;
+      };
+      E('colsame').onclick = function () {
+        if (E('colsame').checked)
+          E('col1').value = E('col2').value = E('col0').value;
+        E('col1').disabled = E('col2').disabled = E('colsame').checked;
+      };
+
+      // Make UI more user friendly with pickers
+      E('pwm_cnt').onclick = combo_fix;
+    }
+
+    function combo_fix() {
+      if (E('pwm_cnt').value == 0) {
+        E("pwm_per_lbl").style.display = "none";
+        E("pwm_per").style.display = "none";
+      } else {
+        E("pwm_per_lbl").style.display = "";
+        E("pwm_per").style.display = "";
+        if (E("pwm_cnt").value > E("pwm_per").value * 2)
+          E("pwm_per").value = Math.floor(E("pwm_cnt").value / 2);
+      }
+    };
+
+    function ser_currule() {
+      // Serializes current rule
+      var dow = (E("dow0").checked ? 0 : 0x01) |  // Inverse logic!
+                (E("dow1").checked ? 0 : 0x02) |
+                (E("dow2").checked ? 0 : 0x04) |
+                (E("dow3").checked ? 0 : 0x08) |
+                (E("dow4").checked ? 0 : 0x10) |
+                (E("dow5").checked ? 0 : 0x20) |
+                (E("dow6").checked ? 0 : 0x40);
+      return {
+        "cond": {
+          "start_time": Math.floor((E("time_start").valueAsNumber || 0) / 60000),
+          "end_time":   Math.floor((E("time_end").valueAsNumber || 0) / 60000),
+          "dow":        dow,
+          "dom":        E("time_dom").value,
+          "pwm_cnt":    E("pwm_cnt").value,
+          "pwm_per":    E("pwm_per").value,
+        },
+        "action": {
+          "trans":      0,
+          "transd":     0,
+          "show":       E("display_sel").value,
+          "greet":      E("display_extra0").value,
+          "extra":      E("display_extra1").checked,
+        },
+        "mcolor": parseInt(E("col0").value.substring(1), 16),
+        "gcolor": parseInt(E("col1").value.substring(1), 16),
+        "ecolor": parseInt(E("col2").value.substring(1), 16),
+      };
+    }
+
+    async function stop_demo() {
+      // Sets regular mode (mode 0)
+      var setmode = msg_wrap(new DataView((new Uint8Array([7, 0])).buffer));
+      await caract.writeValue(new TextEncoder().encode(setmode + "\n"));
+    }
+
+    function addrule() {
+      if (devcfg.length >= MAX_RULES)
+        alert("No es poden afegir més de 16 regles!");
+      else {
+        devcfg.push(ser_currule());
+        refresh_config(devcfg);
+      }
+      E("editmodal").style.display = "none";
+    }
+
+    function editrule() {
+      devcfg[E("edtrulen").value] = ser_currule();
+      refresh_config(devcfg);
+      E("editmodal").style.display = "none";
+    }
+
+    var tested_rule = 0;
+    async function closemodal() {
+      // Restore clock mode!
+      if (tested_rule) {
+        tested_rule = 0;
+        await stop_demo();
+        var getmode = msg_wrap(new DataView((new Uint8Array([2])).buffer));
+        await caract.writeValue(new TextEncoder().encode(getmode + "\n"));
+      }
+      E('editmodal').style.display = 'none'
+    }
+
+    async function testrule() {
+      tested_rule = 1;
+      var rule = ser_currule();
+      var pload = serialize_action(rule); // Just the action!
+      var fullp = concat8([new Uint8Array([6]), pload]);
+      var wrapped = msg_wrap(new DataView(fullp.buffer));
+      await send_ble(wrapped);
+
+      var setmode = msg_wrap(new DataView((new Uint8Array([7, 1])).buffer));
+      await caract.writeValue(new TextEncoder().encode(setmode + "\n"));
+    }
+
+    function ruledel(rulen) {
+      devcfg.splice(rulen, 1);
+      refresh_config(devcfg);
+    }
+
+    function ruleup(rulen) {
+      if (rulen != 0) {
+        var a = devcfg[rulen-1];
+        var b = devcfg[rulen];
+        devcfg[rulen-1] = b;
+        devcfg[rulen] = a;
+        refresh_config(devcfg);
+      }
+    }
+
+    function ruledw(rulen) {
+      if (rulen < devcfg.length - 1) {
+        var a = devcfg[rulen];
+        var b = devcfg[rulen+1];
+        devcfg[rulen] = b;
+        devcfg[rulen+1] = a;
+        refresh_config(devcfg);
+      }
+    }
+
+    function ruleedt(rulen) {
+      E("edtrulen").value = rulen;
+      E("time_start").valueAsNumber = devcfg[rulen].cond.start_time * 60000;
+      E("time_end").valueAsNumber = devcfg[rulen].cond.end_time * 60000;
+      for (var i = 0; i < 7; i++)
+        E("dow" + i).checked = !(devcfg[rulen].cond.dow & (1 << i));
+      E("time_dom").value = 0;
+
+      E("pwm_cnt").value = devcfg[rulen].cond.pwm_cnt;
+      E("pwm_per").value = devcfg[rulen].cond.pwm_per;
+
+      E("trans_in").value  = devcfg[rulen].action.trans >> 4;
+      E("trans_out").value = devcfg[rulen].action.trans & 15;
+      E("trans_in_speed").value  = devcfg[rulen].action.transd >> 4;
+      E("trans_out_speed").value = devcfg[rulen].action.transd & 15;
+
+      E("display_sel").value = devcfg[rulen].action.show;
+      E("display_extra0").value = devcfg[rulen].action.greet;
+      E("display_extra1").checked = devcfg[rulen].action.extra;
+
+      E("col0").value = "#" + (devcfg[rulen].mcolor).toString(16).padStart(6, '0');
+      E("col1").value = "#" + (devcfg[rulen].gcolor).toString(16).padStart(6, '0');
+      E("col2").value = "#" + (devcfg[rulen].ecolor).toString(16).padStart(6, '0');
+
+      combo_fix();
+      E("add-rule").style.display = "none";
+      E("update-rule").style.display = "";
+      E("editmodal").style.display = "block";
+    }
+
+    function modal_new() {
+      // Reset state
+      E("edtrulen").value = -1;
+      E("time_start").value = "";
+      E("time_end").value = "";
+      for (var i = 0; i < 7; i++)
+        E("dow" + i).checked = true;
+      E("time_dom").value = 0;
+      E("pwm_cnt").value = 0;
+      E("pwm_per").value = 0;
+
+      E("trans_in").value = 0;
+      E("trans_out").value = 0;
+      E("trans_in_speed").value = 0;
+      E("trans_out_speed").value = 0;
+
+      E("display_sel").value = 0;
+      E("display_extra0").value = 0;
+      E("display_extra1").checked = false;
+
+      E("col0").value = "#804080";
+      E("col1").value = "#804080";
+      E("col2").value = "#804080";
+
+      combo_fix();
+      E("add-rule").style.display = "";
+      E("update-rule").style.display = "none";
+      E("editmodal").style.display = "block";
+    }
+
+    window.onload = pageload;
+  </script>
+</head>
+<body>
+  <center>
+    <h1 class="title"><i>relojito</i> configurator</h1>
+  </center>
+
+  <div id="cont1" class="container">
+    <center>
+      <button id="connbutt" class="button">Connectar al rellotge</button>
+      <button id="disconnbutt" class="button button-danger invisible">Desconnectar del rellotge</button>
+    </center>
+  </div>
+
+  <div id="cont2" class="container invisible">
+    <div id="time_editor">
+      <h3>Estat del rellotge</h3>
+      <p>
+        <b>Mode actual de funcionament:</b> <span id="spanmode"/>
+      </p>
+
+      <label for="seltime">Dia i hora actual:</label>
+      <input type="datetime-local" id="seltime">
+    </div>
+    <div>
+      <button class="button button-outline" onclick="readclock()">Recarregar hora i data</button>
+      <button class="button float-right" onclick="updateclock()">Ajustar rellotge</button>
+    </div>
+  </div>
+
+  <hr/>
+
+  <div id="cont3" class="container invisible">
+
+    <div id="config_editor">
+      <button class="button button-outline float-right" onclick="modal_new()">Afegir regla</button>
+      <h3>Editar configuració</h3>
+
+      <div id="rulelist">
+      </div>
+
+      <hr/>
+
+      <div id="editmodal" class="modal">
+      <div class="newrule modal-content">
+        <h4>Condició</h4>
+        <div>
+          <label for="time_start">Temps d'inici</label> <input type="time" id="time_start"/>
+          <label for="time_end">Temps final</label> <input type="time" id="time_end"/>
+        </div>
+        <div>
+          <label>Dies de la setmana: </label>
+          <input type="checkbox" id="dow1"/> <label for="dow1">Dl.</label>
+          <input type="checkbox" id="dow2"/> <label for="dow2">Dm.</label>
+          <input type="checkbox" id="dow3"/> <label for="dow3">Dc.</label>
+          <input type="checkbox" id="dow4"/> <label for="dow4">Dj.</label>
+          <input type="checkbox" id="dow5"/> <label for="dow5">Dv.</label>
+          <input type="checkbox" id="dow6"/> <label for="dow6">Ds.</label>
+          <input type="checkbox" id="dow0"/> <label for="dow0">Dg.</label>
+        </div>
+        <div>
+          <label for="time_dom">Dia del mes</label>
+          <select id="time_dom" class="inline-sel">
+          </select>
+        </div>
+        <div>
+          <label for="pwm_cnt">Mostrar durant</label>
+          <select id="pwm_cnt" class="inline-sel">
+          </select>
+          <label id="pwm_per_lbl" for="pwm_per"> de cada </label>
+          <select id="pwm_per" class="inline-sel">
+          </select>
+        </div>
+
+        <hr/>
+        <h4>Acció</h4>
+        <div>
+          <label for="trans_in">Transició d'entrada</label>
+          <select id="trans_in" class="inline-sel">
+            <option value="0">Per defecte</option>
+            <option value="1">Sense transició</option>
+            <option value="2">Fade in</option>
+            <option value="3">Fade in per paraules</option>
+            <option value="4">Màquina d'escriure</option>
+            <option value="5">Matrix</option>
+          </select>
+
+          <label for="trans_in_speed">Temps de transició</label>
+          <select id="trans_in_speed" class="inline-sel">
+            <option value="0">125ms</option>
+            <option value="1">250ms</option>
+            <option value="2">350ms</option>
+            <option value="3">500ms</option>
+            <option value="4">700ms</option>
+            <option value="5">800ms</option>
+            <option value="6">900ms</option>
+            <option value="7">1s</option>
+            <option value="8">1.3s</option>
+            <option value="9">1.6s</option>
+            <option value="10">2s</option>
+            <option value="11">2.5s</option>
+            <option value="12">3s</option>
+            <option value="13">3.5s</option>
+            <option value="14">4s</option>
+            <option value="15">5s</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="trans_out">Transició de sortida</label>
+          <select id="trans_out" class="inline-sel">
+            <option value="0">Per defecte</option>
+            <option value="1">Sense transició</option>
+            <option value="2">Fade out</option>
+            <option value="3">Fade out per lletres</option>
+          </select>
+          <label for="trans_out_speed">Temps de transició</label>
+          <select id="trans_out_speed" class="inline-sel">
+            <option value="0">125ms</option>
+            <option value="1">250ms</option>
+            <option value="2">350ms</option>
+            <option value="3">500ms</option>
+            <option value="4">700ms</option>
+            <option value="5">800ms</option>
+            <option value="6">900ms</option>
+            <option value="7">1s</option>
+            <option value="8">1.3s</option>
+            <option value="9">1.6s</option>
+            <option value="10">2s</option>
+            <option value="11">2.5s</option>
+            <option value="12">3s</option>
+            <option value="13">3.5s</option>
+            <option value="14">4s</option>
+            <option value="15">5s</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="display_sel">Què mostrar</label>
+          <select id="display_sel" class="inline-sel">
+            <option value="0">L'hora</option>
+            <option value="1">Tres quarts de quinze</option>
+            <option value="2">No res</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="display_extra0">Mostrar addicionalment</label>
+          <select id="display_extra0" class="inline-sel">
+            <option value="0">No res</option>
+            <option value="1">Bon dia</option>
+            <option value="2">Bona tarda</option>
+            <option value="3">Bona nit</option>
+          </select>
+          <input type="checkbox" id="display_extra1"/> <label for="display_extra1">Mostrar "a dormir"</label>
+        </div>
+
+        <div>
+          <div id="color_pickers">
+            <label for="col0">Color hora</label> <input class="inline-col" type="color" id="col0" value="#e66465">
+            &nbsp;&nbsp;&nbsp;<label for="col1">Color salutació</label> <input class="inline-col" type="color" id="col1" value="#e66465">
+            &nbsp;&nbsp;&nbsp;<label for="col2">Color extra</label> <input class="inline-col" type="color" id="col2" value="#e66465">
+            &nbsp;&nbsp;&nbsp;<input type="checkbox" id="colsame"/> <label for="colsame">Mateix color</label> 
+          </div>
+        </div>
+
+      <input id="edtrulen" type="hidden" />
+      <button class="button button-outline" onclick="closemodal()">Cancelar</button>
+      <button id="test-rule" class="button" onclick="testrule()">Provar canvis</button>
+      <button id="update-rule" class="button float-right" onclick="editrule()">Aplicar canvis</button>
+      <button id="add-rule" class="button float-right" onclick="addrule()">Afegir regla</button>
+      </div>
+      </div>
+      
+      <button id="cfg-rld" class="button button-outline">Recarregar configuració</button>
+      <button id="cfg-save" class="button float-right">Guardar configuració</button>
+    </div>
+  </div>
+
+  <div class="footer-ver">
+    Version 1.0
+  </div>
+
+</body>
+</html>

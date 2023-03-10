@@ -1,0 +1,25 @@
+
+This is a LED based wall clock based on STM32 (bluepill)
+
+It features:
+ - USB interface for reprogramming and control (+ CLI)
+ - BLE support (via UART) for Phone/Computer remote control
+ - WS2812B LED driver via SPI hacking for fast accurate updates
+ - WebBluetooth config website for convenience
+
+How does it work?
+
+The LEDs are connected to a single GPIO. By using SPI along with DMA we can
+generate a signal that can drive the LEDs. By choosing an SPI clock of 2.25MHz
+(T=444ns) we can simulate the required waveform to drive the LEDs. Three bits
+are used to represent the zero and one symbol (with a period of 1333ns). By
+using DMA we can guarantee that no interrupt can affect the waveform.
+
+The BLE support comes by using the JDY-19 module, which provides a serial
+bluetooth interface. The serial port is driven at 9600 bauds using interrupts
+for reception and DMA for sending data. This guarantees that no data is lost.
+Since the BLE protocol limits the number of bytes that a packet can contain,
+the data is sent in chunks and reconstructed at the end. For that we use a
+custom ASCII-based frame format, which ensure integrity while maximizing
+compatibility.
+
