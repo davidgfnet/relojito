@@ -488,7 +488,6 @@ int main() {
 
 	start_usb();
 
-	int butst = 0;
 	uint32_t colbuf[LED_CNT];
 	uint64_t mscounter64 = 0, lastupd64 = 0;
 	uint32_t prevmscnt = 0;
@@ -549,17 +548,6 @@ int main() {
 		}
 		else if (work_mode == MODE_DEVDEMO) {
 			// TODO: Implement some funny demo mode
-		}
-
-		// Handle button
-		int bt = gpio_get(GPIOB, GPIO9);
-		if (bt != butst) {
-			if (bt) {
-				// Add one minute
-				uint32_t secs = rtc_get_counter_val();
-				rtc_set_counter_val(secs + 60);
-			}
-			butst = bt;
 		}
 
 		// Blaster the information to the LEDs using SPI+DMA
